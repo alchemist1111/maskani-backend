@@ -300,6 +300,7 @@ api.add_resource(Payments, '/payments', '/payments/<int:payment_id>')
 
 # MaintenanceRequest information
 class MaintenanceRequests(Resource):
+    @jwt_required()
     def get(self, maintenance_request_id=None):
         if maintenance_request_id is None:
             maintenance_requests = MaintenanceRequest.query.all()
@@ -311,7 +312,7 @@ class MaintenanceRequests(Resource):
                 'tenant_id': mr.tenant_id,
                 'admin_id': mr.admin_id 
             } for mr in maintenance_requests]
-            return make_response(jsonify(maintenance_requests_list), 200)
+            return make_response(jsonify(maintenance_requests_list), 200, {"Content-Type": "application/json"})
         else:
             maintenance_request = MaintenanceRequest.query.get_or_404(maintenance_request_id)
             maintenance_request_dict = {
@@ -322,19 +323,36 @@ class MaintenanceRequests(Resource):
                 'tenant_id': maintenance_request.tenant_id,
                 'admin_id': maintenance_request.admin_id
             }
-            return make_response(jsonify(maintenance_request_dict), 200)
+            return make_response(jsonify(maintenance_request_dict), 200, {"Content-Type": "application/json"})
 
+    @jwt_required()
     def post(self):
         data = request.get_json()
+        if not data:
+            return make_response(jsonify({'error': 'No input data provided'}), 400, {"Content-Type": "application/json"})
+
+        user = get_jwt_identity()
+        tenant = Tenant.query.filter_by(user_id=user['id']).first()
+        admin = Admin.query.filter_by(user_id=user['id']).first()
+
+        if not tenant or not admin:
+            return make_response(jsonify({'error': 'User is not authorized as tenant or admin'}), 403, {"Content-Type": "application/json"})
+
+        required_fields = ['issue_type', 'description']
+        missing_fields = [field for field in required_fields if field not in data]
+        if missing_fields:
+            return make_response(jsonify({'error': f'Missing fields: {", ".join(missing_fields)}'}), 400, {"Content-Type": "application/json"})
+
         new_maintenance_request = MaintenanceRequest(
-            issue_type=data.get('issue_type'),
-            description=data.get('description'),
-            date_created=data.get('date_created'),
-            tenant_id=data.get('tenant_id'),
-            admin_id=data.get('admin_id')
+            issue_type=data['issue_type'],
+            description=data['description'],
+            date_created=data.get('date_created'),  # Can be None if handled by DB
+            tenant_id=tenant.id,  # Use tenant_id from the authenticated user's tenant record
+            admin_id=admin.id  # Use admin_id from the authenticated user's admin record
         )
         db.session.add(new_maintenance_request)
         db.session.commit()
+
         maintenance_request_dict = {
             'id': new_maintenance_request.id,
             'issue_type': new_maintenance_request.issue_type,
@@ -343,17 +361,34 @@ class MaintenanceRequests(Resource):
             'tenant_id': new_maintenance_request.tenant_id,
             'admin_id': new_maintenance_request.admin_id
         }
-        return make_response(jsonify(maintenance_request_dict), 201, {"content-type": "application/json"})
+        return make_response(jsonify(maintenance_request_dict), 201, {"Content-Type": "application/json"})
 
+    @jwt_required()
     def put(self, maintenance_request_id):
         data = request.get_json()
+        if not data:
+            return make_response(jsonify({'error': 'No input data provided'}), 400, {"Content-Type": "application/json"})
+
+        user = get_jwt_identity()
+        tenant = Tenant.query.filter_by(user_id=user['id']).first()
+        admin = Admin.query.filter_by(user_id=user['id']).first()
+
+        if not tenant or not admin:
+            return make_response(jsonify({'error': 'User is not authorized as tenant or admin'}), 403, {"Content-Type": "application/json"})
+
         maintenance_request = MaintenanceRequest.query.get_or_404(maintenance_request_id)
-        maintenance_request.issue_type = data.get('issue_type')
-        maintenance_request.description = data.get('description')
-        maintenance_request.date_created = data.get('date_created')
-        maintenance_request.tenant_id = data.get('tenant_id')
-        maintenance_request.admin_id = data.get('admin_id')
+        
+        if 'issue_type' in data:
+            maintenance_request.issue_type = data['issue_type']
+        if 'description' in data:
+            maintenance_request.description = data['description']
+        if 'date_created' in data:
+            maintenance_request.date_created = data['date_created']
+        maintenance_request.tenant_id = tenant.id  # Ensure tenant_id is updated
+        maintenance_request.admin_id = admin.id  # Ensure admin_id is updated
+        
         db.session.commit()
+
         maintenance_request_dict = {
             'id': maintenance_request.id,
             'issue_type': maintenance_request.issue_type,
@@ -362,15 +397,26 @@ class MaintenanceRequests(Resource):
             'tenant_id': maintenance_request.tenant_id,
             'admin_id': maintenance_request.admin_id
         }
-        return make_response(jsonify(maintenance_request_dict), 200)
+        return make_response(jsonify(maintenance_request_dict), 200, {"Content-Type": "application/json"})
 
+    @jwt_required()
     def delete(self, maintenance_request_id):
+        user = get_jwt_identity()
+        tenant = Tenant.query.filter_by(user_id=user['id']).first()
+        admin = Admin.query.filter_by(user_id=user['id']).first()
+
+        if not tenant or not admin:
+            return make_response(jsonify({'error': 'User is not authorized as tenant or admin'}), 403, {"Content-Type": "application/json"})
+
         maintenance_request = MaintenanceRequest.query.get_or_404(maintenance_request_id)
         db.session.delete(maintenance_request)
         db.session.commit()
-        return make_response(jsonify({'message': 'Maintenance request deleted'}), 200)
+        return make_response(jsonify({'message': 'Maintenance request deleted'}), 200, {"Content-Type": "application/json"})
 
 api.add_resource(MaintenanceRequests, '/maintenance_requests', '/maintenance_requests/<int:maintenance_request_id>')
+
+
+
 # Tenant information
 class Tenants(Resource):
     def get(self):
